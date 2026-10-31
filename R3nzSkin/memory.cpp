@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstring>
 #include <cstdint>
+#include <fstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -12,9 +13,28 @@
 #include "Memory.hpp"
 #include "Offsets.hpp"
 
+// Small file log so a failed signature search can be diagnosed even when the
+// in-game menu never shows up.
+static void log_search(const char* text, const char* detail = nullptr) noexcept
+{
+	char temp[MAX_PATH]{};
+	if (::GetTempPathA(MAX_PATH, temp) == 0)
+		return;
+
+	std::ofstream out{ std::string{ temp } + "R3nzSkin.log", std::ios::app };
+	if (out) {
+		out << text;
+		if (detail)
+			out << detail;
+		out << '\n';
+	}
+}
+
 [[nodiscard]] static std::uint8_t* find_signature(const wchar_t* szModule, const char* szSignature) noexcept
 {
 	const auto module{ ::GetModuleHandleW(szModule) };
+	if (!module)
+		return nullptr;
 
 	using bytes_t = std::vector<std::int32_t>;
 
@@ -42,25 +62,37 @@
 	const auto ntHeaders{ reinterpret_cast<PIMAGE_NT_HEADERS>(reinterpret_cast<std::uint8_t*>(module) + dosHeader->e_lfanew) };
 	const auto textSection{ IMAGE_FIRST_SECTION(ntHeaders) };
 
-	const auto sizeOfImage{ textSection->SizeOfRawData };
+	// The executable can be packed, so the on-disk raw size of the first section is
+	// much smaller than the virtual size it occupies once unpacked. Scanning only
+	// SizeOfRawData silently misses every pattern past that point.
+	const auto sectionSize{ textSection->Misc.VirtualSize > textSection->SizeOfRawData ? textSection->Misc.VirtualSize : textSection->SizeOfRawData };
 	const auto patternBytes{ pattern_to_byte(szSignature) };
 	const auto scanBytes{ reinterpret_cast<std::uint8_t*>(module) + textSection->VirtualAddress };
 
 	const auto s{ patternBytes.size() };
 	const auto d{ patternBytes.data() };
 
+	if (s == 0 || sectionSize <= s)
+		return nullptr;
+
 	MEMORY_BASIC_INFORMATION mbi{ nullptr };
 	const std::uint8_t* next_check_address{ nullptr };
+	constexpr auto readable{ PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY };
 
-	for (auto i{ 0ul }; i < sizeOfImage - s; ++i) {
+	for (auto i{ 0ul }; i < sectionSize - s; ++i) {
 		bool found{ true };
 		for (auto j{ 0ul }; j < s; ++j) {
 			const auto current_address{ scanBytes + i + j };
 			if (current_address >= next_check_address) {
-				if (!::VirtualQuery(current_address, &mbi, sizeof(mbi)))
+				if (!::VirtualQuery(current_address, &mbi, sizeof(mbi))) {
+					found = false;
 					break;
+				}
 
-				if (mbi.Protect == PAGE_NOACCESS) {
+				// Uncommitted, guard and non-readable pages must be skipped whole.
+				// Reading them raises an access violation on the injected thread,
+				// which would take the whole game process down while it is loading.
+				if (mbi.State != MEM_COMMIT || !(mbi.Protect & readable) || (mbi.Protect & PAGE_GUARD)) {
 					i += reinterpret_cast<std::uintptr_t>(mbi.BaseAddress) + mbi.RegionSize - (reinterpret_cast<std::uintptr_t>(scanBytes) + i);
 					i--;
 					found = false;
@@ -101,9 +133,14 @@ void Memory::update(bool gameClient) noexcept
 	}
 }
 
-void Memory::Search(bool gameClient)
+bool Memory::Search(bool gameClient)
 {
 	using namespace std::chrono_literals;
+
+	// Fallback: never retry forever. If the signatures cannot be resolved in time
+	// (game update moved them, protected pages, ...), give up and leave the game
+	// completely alone instead of keeping a scanner running next to the match.
+	constexpr auto maxAttempts{ 30u };
 
 	try {
 		this->base = reinterpret_cast<std::uintptr_t>(::GetModuleHandle(nullptr));
@@ -112,7 +149,7 @@ void Memory::Search(bool gameClient)
 		for (const auto& sig : signatureToSearch)
 			*sig.offset = 0;
 
-		while (true) {
+		for (auto attempt{ 0u };; ++attempt) {
 			bool missing_offset{ false };
 			for (auto& sig : signatureToSearch) {
 
@@ -123,8 +160,14 @@ void Memory::Search(bool gameClient)
 					auto address{ find_signature(nullptr, pattern.c_str()) };
 
 					if (!address) {
-						::MessageBoxA(nullptr, ("Failed to find pattern: " + pattern).c_str(), "R3nzSkin", MB_OK | MB_ICONWARNING);
-						// cheatManager.logger->addLog("Not found: %s\n", pattern.c_str());
+						// Never show a modal dialog here: this runs on the thread that is
+						// injected while the game is still starting, and a hidden message
+						// box behind the fullscreen game looks exactly like a frozen game
+						// that never gets into the match. Retry quietly instead.
+						if (attempt < 3) {
+							cheatManager.logger->addLog("[..] Pattern not found yet: %s\n", pattern.c_str());
+							log_search("[..] pattern not found yet: ", pattern.c_str());
+						}
 						continue;
 					}
 					if (sig.offset == &offsets::global::GameClient) {
@@ -168,13 +211,26 @@ void Memory::Search(bool gameClient)
 				}
 			}
 
-			if (!missing_offset)
-				break;
+			if (!missing_offset) {
+				log_search(gameClient ? "[OK] game client offsets found" : "[OK] all offsets found");
+				this->update(gameClient);
+				return true;
+			}
+
+			if (attempt + 1 >= maxAttempts) {
+				// Inert fallback: no hooks, no memory writes, the game keeps running.
+				cheatManager.logger->addLog("[!!] Signatures not found, mod disabled for this game.\n");
+				log_search("[!!] signatures not found, mod disabled for this game");
+				return false;
+			}
 
 			std::this_thread::sleep_for(2s);
 		}
-		this->update(gameClient);
 	} catch (const std::exception& e) {
-		::MessageBoxA(nullptr, e.what(), "R3nzSkin", MB_OK | MB_ICONWARNING);
+		cheatManager.logger->addLog("[!!] Memory search failed: %s\n", e.what());
+		log_search("[!!] memory search failed: ", e.what());
+		return false;
 	}
+
+	return false;
 }

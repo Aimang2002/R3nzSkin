@@ -1,0 +1,140 @@
+name: Release
+
+on:
+  schedule:
+    # Poll upstream every 3 hours (scheduled workflows only run on the default branch)
+    - cron: '0 */3 * * *'
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild and replace the release for the current code
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Merge upstream main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/hydy100/R3nzSkin.git 2>/dev/null || true
+          git fetch upstream main --tags
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "main already contains upstream/main"
+          else
+            git merge --no-edit upstream/main
+            git push origin HEAD:main
+          fi
+
+          echo "UPSTREAM_SHA=$(git rev-parse --short=7 upstream/main)" >> "$GITHUB_ENV"
+          echo "TREE_SHA=$(git rev-parse --short=7 HEAD^{tree})" >> "$GITHUB_ENV"
+
+      - name: Compute release tag
+        shell: bash
+        run: |
+          echo "TAG=build-${UPSTREAM_SHA}-${TREE_SHA}" >> "$GITHUB_ENV"
+          echo "release tag: build-${UPSTREAM_SHA}-${TREE_SHA}"
+
+      - name: Skip if this build already exists
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            if [ "${{ inputs.force }}" = "true" ]; then
+              echo "Deleting existing release and tag for a forced rebuild"
+              gh release delete "$TAG" --repo "${{ github.repository }}" --yes --cleanup-tag
+            else
+              echo "SKIP=true" >> "$GITHUB_ENV"
+              echo "Release $TAG already exists, nothing to do."
+            fi
+          fi
+
+      - name: Setup MSBuild
+        if: env.SKIP != 'true'
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build (x64)
+        if: env.SKIP != 'true'
+        shell: cmd
+        run: msbuild R3nzSkin\R3nzSkin.vcxproj /p:Platform=x64 /p:Configuration=ChinaServer /m /v:m
+
+      - name: Package
+        if: env.SKIP != 'true'
+        shell: pwsh
+        run: |
+          $dll = Get-ChildItem -Recurse -Filter R3nzSkin.dll |
+            Where-Object { $_.FullName -match 'Release' -and $_.FullName -match 'ChinaServer' } |
+            Select-Object -First 1
+          if (-not $dll) { throw "Build output R3nzSkin.dll (ChinaServer) not found" }
+
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          Copy-Item $dll.FullName out/R3nzSkin.dll
+
+          $switch = @'
+          @echo off
+          setlocal
+          set "FLAG=%~dp0R3nzSkin.off"
+          if exist "%FLAG%" (
+              del /f /q "%FLAG%"
+              echo [R3nzSkin] Mod ENABLED. It will load on the next game start.
+          ) else (
+              > "%FLAG%" echo disabled
+              echo [R3nzSkin] Mod DISABLED. It will be ignored on the next game start.
+          )
+          echo.
+          pause
+          '@
+          $switch | Set-Content -Encoding ascii -Path out/R3nzSkin_switch.cmd
+
+          $zip = "R3nzSkin-$env:TAG.zip"
+          Compress-Archive -Path out/* -DestinationPath $zip -Force
+          Add-Content -Path $env:GITHUB_ENV -Value "ZIP=$zip"
+
+      - name: Create GitHub release
+        if: env.SKIP != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "Automated x64 build of this fork, based on upstream hydy100/R3nzSkin."
+            echo
+            echo "- Upstream: hydy100/R3nzSkin ${UPSTREAM_SHA}"
+            echo "- Source tree: ${TREE_SHA}"
+            echo
+            echo "### Install"
+            echo "1. Extract and copy R3nzSkin.dll into the game's Game folder as hid.dll."
+            echo "2. Optional: R3nzSkin_switch.cmd toggles a R3nzSkin.off flag that makes the mod fully inert."
+            echo "3. Start the game and press Insert in-game to open the menu."
+            echo
+            echo "Startup log: %TEMP%\\R3nzSkin.log"
+          } > notes.md
+
+          gh release create "$TAG" "$ZIP" \
+            --repo "${{ github.repository }}" \
+            --target "$(git rev-parse HEAD)" \
+            --title "Build $TAG" \
+            --notes-file notes.md
