@@ -353,6 +353,15 @@ void Hooks::init() noexcept
 	const auto player{ cheatManager.memory->localPlayer };
 	const auto heroes{ cheatManager.memory->heroList };
 	const auto minions{ cheatManager.memory->minionList };
+
+	// The dll can be loaded while the game is still creating its object managers
+	// (the Chinese client is injected at process start). Touching a null or bogus
+	// manager list here runs on the render thread and takes the whole game down.
+	if (!heroes || !minions)
+		return;
+	if (heroes->length < 0 || heroes->length > 1000 || minions->length < 0 || minions->length > 10000)
+		return;
+
 	static const auto playerHash{ player ? fnv::hash_runtime(player->get_character_data_stack()->base_skin.model.str) : 0u };
 
 	static bool turretsApplied{ false };
@@ -372,14 +381,15 @@ void Hooks::init() noexcept
 		if (player) {
 			if (cheatManager.config->current_combo_skin_index > 0) {
 				const auto& values{ cheatManager.database->champions_skins[fnv::hash_runtime(player->get_character_data_stack()->base_skin.model.str)] };
-				player->change_skin(values[cheatManager.config->current_combo_skin_index - 1].model_name, values[cheatManager.config->current_combo_skin_index - 1].skin_id);
+				if (static_cast<std::size_t>(cheatManager.config->current_combo_skin_index) <= values.size())
+					player->change_skin(values[cheatManager.config->current_combo_skin_index - 1].model_name, values[cheatManager.config->current_combo_skin_index - 1].skin_id);
 			}
 		}
 
 		const auto my_team{ player ? player->get_team() : 1 };
 		for (auto i{ 0u }; i < heroes->length; ++i) {
 			const auto hero{ heroes->list[i] };
-			if (hero == player)
+			if (!hero || hero == player)
 				continue;
 
 			const auto champion_name_hash{ fnv::hash_runtime(hero->get_character_data_stack()->base_skin.model.str) };
@@ -394,13 +404,16 @@ void Hooks::init() noexcept
 
 			if (config_entry->second > 0) {
 				const auto& values = cheatManager.database->champions_skins[champion_name_hash];
-				hero->change_skin(values[config_entry->second - 1].model_name, values[config_entry->second - 1].skin_id);
+				// A saved index can outlive the skin list it was chosen from (game
+				// patches add/remove skins), and indexing past the end crashes the game.
+				if (static_cast<std::size_t>(config_entry->second) <= values.size())
+					hero->change_skin(values[config_entry->second - 1].model_name, values[config_entry->second - 1].skin_id);
 			}
 		}
 	});
 
 	for (auto i{ 0u }; i < heroes->length; ++i) {
-		if (const auto hero{ heroes->list[i] }; !hero->get_character_data_stack()->stack.empty()) {
+		if (const auto hero{ heroes->list[i] }; hero && !hero->get_character_data_stack()->stack.empty()) {
 			// Viego transforms into another champion as 2nd form, our own skin's id may not match for every champion. (same problem exists in sylas) 
 			if (const auto championName{ fnv::hash_runtime(hero->get_character_data_stack()->base_skin.model.str) }; championName == FNV("Viego") || championName == FNV("Sylas"))
 				continue;
@@ -414,6 +427,8 @@ void Hooks::init() noexcept
 
 	for (auto i{ 0u }; i < minions->length; ++i) {
 		const auto minion{ minions->list[i] };
+		if (!minion)
+			continue;
 
 		if (minion->isLaneMinion() && cheatManager.config->current_minion_skin_index != -1) {
 			if (player && player->get_team() == 2)
@@ -459,8 +474,10 @@ void Hooks::install() noexcept
 		swap_chain_vmt->apply_hook<d3d_vtable::dxgi_resize_buffers>(13);
 		cheatManager.logger->addLog("DX11 Hooked!\n");
 	} else {
-		::MessageBoxA(nullptr, "Uncheck legacy dx9 in the client settings cuz it is no longer supported.", "R3nzSkin", MB_OK | MB_ICONWARNING);
-		::ExitProcess(EXIT_SUCCESS);
+		// Never terminate the game here: if the swap chain is not there yet (the dll
+		// is loaded at process start, or the client is set to legacy dx9), just leave
+		// the game alone. Killing it is what makes the match fail to start.
+		cheatManager.logger->addLog("[!!] Swap chain not found, overlay disabled.\n");
 	}
 }
 
@@ -468,7 +485,9 @@ void Hooks::uninstall() noexcept
 {
 	cheatManager.config->save();
 
-	::SetWindowLongW(cheatManager.memory->window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(originalWndProc));
-	swap_chain_vmt->unhook();
+	if (originalWndProc)
+		::SetWindowLongW(cheatManager.memory->window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(originalWndProc));
+	if (swap_chain_vmt)
+		swap_chain_vmt->unhook();
 	cheatManager.cheatState = false;
 }

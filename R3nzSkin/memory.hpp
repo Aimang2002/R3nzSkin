@@ -26,7 +26,7 @@ public:
 
 class Memory {
 public:
-	void Search(bool gameClient = true);
+	bool Search(bool gameClient = true);
 
 	std::uintptr_t base;
 	HWND window;
@@ -125,7 +125,8 @@ private:
 		},
 		{
 			{
-				"E8 ? ? ? ? 45 33 C0 48 8B D0 48 8B CB E8 ? ? ? ? 48"
+				"E8 ? ? ? ? 45 33 C0 48 8B D0 48 8B CB E8 ? ? ? ? 48",
+				"E8 ? ? ? ? 0F 57 DB 4C 8B C0 F3 0F 5A DE"
 			}, true, false, false, 0, &offsets::functions::translateString_UNSAFE_DONOTUSE
 		},
 		{

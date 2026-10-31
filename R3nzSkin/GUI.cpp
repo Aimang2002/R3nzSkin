@@ -138,7 +138,7 @@ void GUI::render() noexcept
 				}
 			}
 
-			static std::int32_t temp_heroes_length = heroes->length;
+			static std::int32_t temp_heroes_length = heroes && heroes->length > 0 && heroes->length <= 1000 ? heroes->length : 0;
 			if (temp_heroes_length > 1)
 			{
 				if (ImGui::BeginTabItem("Other Champs")) {
@@ -147,7 +147,7 @@ void GUI::render() noexcept
 					for (auto i{ 0u }; i < heroes->length; ++i) {
 						const auto hero{ heroes->list[i] };
 
-						if (hero == player)
+						if (!hero || hero == player)
 						{
 							continue;
 						}
