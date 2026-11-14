@@ -22,6 +22,17 @@ void Config::init() noexcept
 	}
 
 	this->path /= _XorStr("hid");
+
+	// One-time migration of the pre-rename config; no-op once hid64 exists.
+	std::error_code ec;
+	const auto old_dir{ this->path.parent_path() / _XorStr("R3nzSkin") };
+	const auto new_file{ this->path / _XorStr("hid64") };
+	if (!std::filesystem::exists(new_file, ec) && std::filesystem::exists(old_dir / _XorStr("R3nzSkin64"), ec)) {
+		std::filesystem::create_directory(this->path, ec);
+		std::filesystem::rename(old_dir / _XorStr("R3nzSkin64"), new_file, ec);
+		if (!ec)
+			std::filesystem::remove(old_dir, ec);
+	}
 }
 
 void Config::save() noexcept
