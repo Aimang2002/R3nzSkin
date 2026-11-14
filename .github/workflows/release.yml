@@ -96,18 +96,18 @@ jobs:
           $switch = @'
           @echo off
           setlocal
-          set "FLAG=%~dp0R3nzSkin.off"
+          set "FLAG=%~dp0hid.off"
           if exist "%FLAG%" (
               del /f /q "%FLAG%"
-              echo [R3nzSkin] Mod ENABLED. It will load on the next game start.
+              echo [hid] Mod ENABLED. It will load on the next game start.
           ) else (
               > "%FLAG%" echo disabled
-              echo [R3nzSkin] Mod DISABLED. It will be ignored on the next game start.
+              echo [hid] Mod DISABLED. It will be ignored on the next game start.
           )
           echo.
           pause
           '@
-          $switch | Set-Content -Encoding ascii -Path out/R3nzSkin_switch.cmd
+          $switch | Set-Content -Encoding ascii -Path out/hid_switch.cmd
 
           $zip = "R3nzSkin-$env:TAG.zip"
           Compress-Archive -Path out/* -DestinationPath $zip -Force
@@ -127,10 +127,10 @@ jobs:
             echo
             echo "### Install"
             echo "1. Extract and copy R3nzSkin.dll into the game's Game folder as hid.dll."
-            echo "2. Optional: R3nzSkin_switch.cmd toggles a R3nzSkin.off flag that makes the mod fully inert."
+            echo "2. Optional: hid_switch.cmd toggles a hid.off flag that makes the mod fully inert."
             echo "3. Start the game and press Insert in-game to open the menu."
             echo
-            echo "Startup log (opt-in): set R3NZ_LOG=1 to write %TEMP%\\hid_trace.log"
+            echo "Startup log (opt-in): set HID_LOG=1 to write %TEMP%\\hid_trace.log"
           } > notes.md
 
           gh release create "$TAG" "$ZIP" \

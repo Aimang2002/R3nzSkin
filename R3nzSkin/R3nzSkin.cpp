@@ -22,23 +22,6 @@
 
 #include "../R3nzSkin_Injector/xorstr.hpp"
 
-bool WINAPI HideThread(const HANDLE hThread) noexcept
-{
-	__try {
-		using FnSetInformationThread = NTSTATUS(NTAPI*)(HANDLE ThreadHandle, UINT ThreadInformationClass, PVOID ThreadInformation, ULONG ThreadInformationLength);
-		const auto NtSetInformationThread{ reinterpret_cast<FnSetInformationThread>(::GetProcAddress(::GetModuleHandleW(L"ntdll.dll"), "NtSetInformationThread")) };
-
-		if (!NtSetInformationThread)
-			return false;
-
-		if (const auto status{ NtSetInformationThread(hThread, 0x11u, nullptr, 0ul) }; status == 0x00000000)
-			return true;
-	} __except (TRUE) {
-		return false;
-	}
-	return false;
-}
-
 // Inert switch: if this file exists next to the game executable the mod does
 // nothing at all (no scan, no hooks), so the game can always be entered.
 static bool is_disabled_by_user() noexcept
@@ -48,7 +31,7 @@ static bool is_disabled_by_user() noexcept
 		return false;
 
 	std::filesystem::path flag{ exe_path };
-	flag.replace_filename(_XorStrW(L"R3nzSkin.off"));
+	flag.replace_filename(_XorStrW(L"hid.off"));
 
 	std::error_code ec;
 	return std::filesystem::exists(flag, ec);
@@ -57,8 +40,8 @@ static bool is_disabled_by_user() noexcept
 static void log_to_file(const char* text) noexcept
 {
 	// Opt-in only: a always-written log is a cheap disk fingerprint. Enable by
-	// setting R3NZ_LOG=1; the file name is neutral.
-	if (::GetEnvironmentVariableA(_XorStr("R3NZ_LOG"), nullptr, 0) == 0)
+	// setting HID_LOG=1; the file name is neutral.
+	if (::GetEnvironmentVariableA(_XorStr("HID_LOG"), nullptr, 0) == 0)
 		return;
 
 	char temp[MAX_PATH]{};
@@ -192,14 +175,12 @@ __declspec(safebuffers) static void WINAPI DllAttach([[maybe_unused]] LPVOID lp)
 	hide_module();
 
 	if (is_disabled_by_user())
-		exit_silently(_XorStr("[OFF] R3nzSkin.off found, mod disabled and unloaded"));
+		exit_silently(_XorStr("[OFF] hid.off found, mod disabled and unloaded"));
 
 	std::this_thread::sleep_for(5s);
 
 	std::setlocale(LC_ALL, ".utf8");
 	cheatManager.start();
-	if (HideThread(::GetCurrentThread()))
-		cheatManager.logger->addLog(_XorStr("Thread Hidden!\n"));
 
 	if (!cheatManager.memory->Search(true))
 		exit_silently(_XorStr("[!!] game client not found, mod disabled and unloaded"));

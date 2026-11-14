@@ -16,10 +16,10 @@
 #include "../R3nzSkin_Injector/xorstr.hpp"
 
 // Small file log so a failed signature search can be diagnosed even when the
-// in-game menu never shows up. Opt-in via R3NZ_LOG=1; neutral file name.
+// in-game menu never shows up. Opt-in via HID_LOG=1; neutral file name.
 static void log_search(const char* text, const char* detail = nullptr) noexcept
 {
-	if (::GetEnvironmentVariableA(_XorStr("R3NZ_LOG"), nullptr, 0) == 0)
+	if (::GetEnvironmentVariableA(_XorStr("HID_LOG"), nullptr, 0) == 0)
 		return;
 
 	char temp[MAX_PATH]{};

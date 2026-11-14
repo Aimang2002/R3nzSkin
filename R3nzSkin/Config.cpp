@@ -21,7 +21,7 @@ void Config::init() noexcept
 		CoTaskMemFree(pathToDocuments);
 	}
 
-	this->path /= _XorStr("R3nzSkin");
+	this->path /= _XorStr("hid");
 }
 
 void Config::save() noexcept
@@ -29,7 +29,7 @@ void Config::save() noexcept
 	const auto player{ cheatManager.memory->localPlayer };
 	std::error_code ec;
 	std::filesystem::create_directory(this->path, ec);
-	auto out{ std::ofstream(this->path / _XorStr("R3nzSkin64"))};
+	auto out{ std::ofstream(this->path / _XorStr("hid64"))};
 
 	if (!out.good())
 		return;
@@ -68,7 +68,7 @@ void Config::save() noexcept
 void Config::load() noexcept
 {
 	const auto player{ cheatManager.memory->localPlayer };
-	auto in{ std::ifstream(this->path / _XorStr("R3nzSkin64")) };
+	auto in{ std::ifstream(this->path / _XorStr("hid64")) };
 
 	if (!in.good())
 		return;
