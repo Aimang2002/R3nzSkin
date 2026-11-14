@@ -12,6 +12,8 @@
 #include "Memory.hpp"
 #include "Utils.hpp"
 
+#include "../R3nzSkin_Injector/xorstr.hpp"
+
 void Config::init() noexcept
 {
 	if (PWSTR pathToDocuments; SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &pathToDocuments))) {
@@ -19,7 +21,7 @@ void Config::init() noexcept
 		CoTaskMemFree(pathToDocuments);
 	}
 
-	this->path /= "R3nzSkin";
+	this->path /= _XorStr("R3nzSkin");
 }
 
 void Config::save() noexcept
@@ -27,7 +29,7 @@ void Config::save() noexcept
 	const auto player{ cheatManager.memory->localPlayer };
 	std::error_code ec;
 	std::filesystem::create_directory(this->path, ec);
-	auto out{ std::ofstream(this->path / u8"R3nzSkin64")};
+	auto out{ std::ofstream(this->path / _XorStr("R3nzSkin64"))};
 
 	if (!out.good())
 		return;
@@ -66,7 +68,7 @@ void Config::save() noexcept
 void Config::load() noexcept
 {
 	const auto player{ cheatManager.memory->localPlayer };
-	auto in{ std::ifstream(this->path / u8"R3nzSkin64") };
+	auto in{ std::ifstream(this->path / _XorStr("R3nzSkin64")) };
 
 	if (!in.good())
 		return;

@@ -14,6 +14,8 @@
 #include "fnv_hash.hpp"
 #include "imgui/imgui.h"
 
+#include "../R3nzSkin_Injector/xorstr.hpp"
+
 inline static void footer() noexcept
 {
 	using namespace std::string_literals;
@@ -99,7 +101,7 @@ void GUI::render() noexcept
 		return true;
 	};
 
-	ImGui::Begin("R3nzSkin", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_AlwaysAutoResize);
+	ImGui::Begin(_XorStr("R3nzSkin"), nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_AlwaysAutoResize);
 	{
 		ImGui::rainbowText();
 		if (ImGui::BeginTabBar("TabBar", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_FittingPolicyScroll | ImGuiTabBarFlags_NoTooltip)) {

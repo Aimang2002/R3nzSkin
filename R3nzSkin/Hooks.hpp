@@ -11,4 +11,5 @@ public:
 	void init() noexcept;
 	void install() noexcept;
 	void uninstall() noexcept;
+	void poll() noexcept;
 };

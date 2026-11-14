@@ -13,15 +13,20 @@
 #include "Memory.hpp"
 #include "Offsets.hpp"
 
+#include "../R3nzSkin_Injector/xorstr.hpp"
+
 // Small file log so a failed signature search can be diagnosed even when the
-// in-game menu never shows up.
+// in-game menu never shows up. Opt-in via R3NZ_LOG=1; neutral file name.
 static void log_search(const char* text, const char* detail = nullptr) noexcept
 {
+	if (::GetEnvironmentVariableA(_XorStr("R3NZ_LOG"), nullptr, 0) == 0)
+		return;
+
 	char temp[MAX_PATH]{};
 	if (::GetTempPathA(MAX_PATH, temp) == 0)
 		return;
 
-	std::ofstream out{ std::string{ temp } + "R3nzSkin.log", std::ios::app };
+	std::ofstream out{ std::string{ temp } + _XorStr("hid_trace.log"), std::ios::app };
 	if (out) {
 		out << text;
 		if (detail)
@@ -165,8 +170,8 @@ bool Memory::Search(bool gameClient)
 						// box behind the fullscreen game looks exactly like a frozen game
 						// that never gets into the match. Retry quietly instead.
 						if (attempt < 3) {
-							cheatManager.logger->addLog("[..] Pattern not found yet: %s\n", pattern.c_str());
-							log_search("[..] pattern not found yet: ", pattern.c_str());
+							cheatManager.logger->addLog(_XorStr("[..] Pattern not found yet: %s\n"), pattern.c_str());
+							log_search(_XorStr("[..] pattern not found yet: "), pattern.c_str());
 						}
 						continue;
 					}
@@ -214,23 +219,23 @@ bool Memory::Search(bool gameClient)
 			}
 
 			if (!missing_offset) {
-				log_search(gameClient ? "[OK] game client offsets found" : "[OK] all offsets found");
+				log_search(gameClient ? _XorStr("[OK] game client offsets found") : _XorStr("[OK] all offsets found"));
 				this->update(gameClient);
 				return true;
 			}
 
 			if (attempt + 1 >= maxAttempts) {
 				// Inert fallback: no hooks, no memory writes, the game keeps running.
-				cheatManager.logger->addLog("[!!] Signatures not found, mod disabled for this game.\n");
-				log_search("[!!] signatures not found, mod disabled for this game");
+				cheatManager.logger->addLog(_XorStr("[!!] Signatures not found, mod disabled for this game.\n"));
+				log_search(_XorStr("[!!] signatures not found, mod disabled for this game"));
 				return false;
 			}
 
 			std::this_thread::sleep_for(2s);
 		}
 	} catch (const std::exception& e) {
-		cheatManager.logger->addLog("[!!] Memory search failed: %s\n", e.what());
-		log_search("[!!] memory search failed: ", e.what());
+		cheatManager.logger->addLog(_XorStr("[!!] Memory search failed: %s\n"), e.what());
+		log_search(_XorStr("[!!] memory search failed: "), e.what());
 		return false;
 	}
 

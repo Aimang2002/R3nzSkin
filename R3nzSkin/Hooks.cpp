@@ -4,6 +4,7 @@
 #include <ShlObj.h>
 #include <cinttypes>
 #include <filesystem>
+#include <map>
 #include <string>
 
 #include "fnv_hash.hpp"
@@ -40,12 +41,30 @@ static inline void testFunc() noexcept
 	}
 }
 
-static LRESULT WINAPI wndProc(const HWND window, const UINT msg, const WPARAM wParam, const LPARAM lParam) noexcept
-{
-	if (ImGui_ImplWin32_WndProcHandler(window, msg, wParam, lParam))
-		return true;
+static bool wndproc_installed{ false };
+static LRESULT WINAPI wndProc(const HWND window, const UINT msg, const WPARAM wParam, const LPARAM lParam) noexcept;
 
-	if (msg == WM_KEYDOWN) {
+// The subclass is installed only while the menu is open; while closed the worker
+// thread polls hotkeys instead, so GWLP_WNDPROC points at the game for most of
+// the match (smaller detection surface).
+static void install_wndproc() noexcept
+{
+	if (wndproc_installed || !cheatManager.memory->window)
+		return;
+	originalWndProc = WNDPROC(::SetWindowLongPtr(cheatManager.memory->window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&wndProc)));
+	wndproc_installed = true;
+}
+
+static void remove_wndproc() noexcept
+{
+	if (!wndproc_installed || !cheatManager.memory->window)
+		return;
+	::SetWindowLongPtr(cheatManager.memory->window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(originalWndProc));
+	wndproc_installed = false;
+}
+
+static void handle_key(const WPARAM wParam) noexcept
+{
 		if (wParam == cheatManager.config->menuKey.getKey()) {
 			cheatManager.gui->is_open = !cheatManager.gui->is_open;
 			if (!cheatManager.gui->is_open)
@@ -90,9 +109,33 @@ static LRESULT WINAPI wndProc(const HWND window, const UINT msg, const WPARAM wP
 		} else if (wParam == VK_F7) {
 			testFunc();
 		}
-	}
+}
+
+static LRESULT WINAPI wndProc(const HWND window, const UINT msg, const WPARAM wParam, const LPARAM lParam) noexcept
+{
+	if (ImGui_ImplWin32_WndProcHandler(window, msg, wParam, lParam))
+		return true;
+
+	if (msg == WM_KEYDOWN)
+		handle_key(wParam);
 
 	return ::CallWindowProc(originalWndProc, window, msg, wParam, lParam);
+}
+
+// Edge-triggered hotkey poll used while the menu is closed (subclass removed).
+void Hooks::poll() noexcept
+{
+	static std::map<int, bool> prev{};
+	const auto pressed{ [](const int vk) {
+		const bool now{ (::GetAsyncKeyState(vk) & 0x8000) != 0 };
+		const bool was{ prev[vk] };
+		prev[vk] = now;
+		return now && !was;
+	} };
+
+	for (const int vk : { cheatManager.config->menuKey.getKey(), 0x35, cheatManager.config->nextSkinKey.getKey(), cheatManager.config->previousSkinKey.getKey(), VK_F7 })
+		if (pressed(vk))
+			handle_key(static_cast<WPARAM>(vk));
 }
 
 std::once_flag init_device;
@@ -236,9 +279,6 @@ namespace d3d_vtable {
 		create_render_target();
 		::ImGui_ImplDX11_Init(d3d11_device, d3d11_device_context);
 		::ImGui_ImplDX11_CreateDeviceObjects();
-
-		originalWndProc = WNDPROC(::SetWindowLongPtr(cheatManager.memory->window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&wndProc)));
-		cheatManager.logger->addLog("WndProc hooked!\n\tOriginal: 0x%X\n\tNew: 0x%X\n", &originalWndProc, &wndProc);
 	}
 
 	static void render() noexcept
@@ -246,6 +286,10 @@ namespace d3d_vtable {
 		const auto client{ cheatManager.memory->client };
 		if (client && client->get_game_state() == GGameState_s::Running) {
 			cheatManager.hooks->init();
+			if (cheatManager.gui->is_open)
+				install_wndproc();
+			else
+				remove_wndproc();
 			if (cheatManager.gui->is_open) {
 				::ImGui_ImplDX11_NewFrame();
 				::ImGui_ImplWin32_NewFrame();
@@ -485,8 +529,7 @@ void Hooks::uninstall() noexcept
 {
 	cheatManager.config->save();
 
-	if (originalWndProc)
-		::SetWindowLongW(cheatManager.memory->window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(originalWndProc));
+	remove_wndproc();
 	if (swap_chain_vmt)
 		swap_chain_vmt->unhook();
 	cheatManager.cheatState = false;
